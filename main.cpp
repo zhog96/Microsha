@@ -32,9 +32,18 @@ class Microsha {
 
     int sh_cd(vector<string> & comm) {
         if(comm.size() > 2) {
+            perror("cd: to many arguments");
+            return 1;
+        }
+        if(comm.size() == 1) {
+            if(chdir(getenv("HOME")) == 0) {
+                return 0;
+            }
+            perror("cd");
             return 1;
         }
         if(chdir(comm[1].c_str()) != 0) {
+            perror("cd");
             return 1;
         }
         return 0;
