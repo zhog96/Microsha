@@ -13,6 +13,9 @@
 #include <fnmatch.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
+#include <sys/times.h>
+#include <sys/time.h>
 
 using namespace std;
 
@@ -29,6 +32,54 @@ class Microsha {
     private:
 
     bool running = true;
+    bool timing = false;
+
+    class Timer {
+        struct timeval tv1,tv2,dtv;
+        struct timezone tz;
+        struct rusage rusage;
+        double utime_st, stime_st;
+
+        public:
+        double rtime, utime, stime;
+
+        int time_start() { 
+            gettimeofday(&tv1, &tz);
+            utime_st = (double) rusage.ru_utime.tv_sec + (double) rusage.ru_utime.tv_usec / 1000000.0;
+            stime_st = (double) rusage.ru_stime.tv_sec + (double) rusage.ru_stime.tv_usec / 1000000.0;
+            return 0;
+        }
+
+        int time_count() { 
+            gettimeofday(&tv2, &tz);
+            dtv.tv_sec = tv2.tv_sec - tv1.tv_sec;
+            dtv.tv_usec = tv2.tv_usec - tv1.tv_usec;
+            if(dtv.tv_usec < 0) {
+                dtv.tv_sec--; 
+                dtv.tv_usec += 1000000;
+            }
+            if(getrusage(RUSAGE_CHILDREN, &rusage) == -1) return 1;
+            rtime = (double) (dtv.tv_sec * 1000 +  dtv.tv_usec / 1000) / 1000.0;
+            utime = (double) rusage.ru_utime.tv_sec + (double) rusage.ru_utime.tv_usec / 1000000.0 - utime_st;
+            stime = (double) rusage.ru_stime.tv_sec + (double) rusage.ru_stime.tv_usec / 1000000.0 - stime_st;
+        }
+    };
+
+    Timer timer;
+
+    int sh_time() {
+        if(!timing) return 0;
+        timing = false;
+        int err = timer.time_count();
+        if (err != 0) {
+            printf("real \t%.4lfs\n", timer.rtime);
+            printf("user \t%.4lfs\n", timer.utime);
+            printf("sys  \t%.4lfs\n", timer.stime);
+            return 0;
+        }
+        perror("time");
+        return err;
+    }
 
     int sh_cd(vector<string> & comm) {
         if(comm.size() > 2) {
@@ -112,6 +163,8 @@ class Microsha {
 
         int * fd = new int[(conv.size() - 2) * 2];
         for(int i = 0; i < conv.size() - 2; i++) pipe(fd + i * 2);
+
+        timer.time_start(); 
 
         if(conv.size() == 2) {
             auto it = conv.begin();
@@ -391,9 +444,14 @@ class Microsha {
 
         line = "";
         if(!getline(cin, line)) {
-            return 1;
+            perror("getline");
+            return -1;
         }
         if(line == "q") running = false;
+        if(line.find("time") == 0) {
+            timing = true;
+            line = line.substr(strlen("time"));
+        }
         return 0;
     }    
 
@@ -428,7 +486,7 @@ class Microsha {
 
     public:
     int run() {
-        printf("# Microsha v.0.1 (c) Pupin Schneider\n\n");
+        printf("# Microsha v.1.0.0 (c) Pupin Schneider\n\n");
         setSignals();
         int err = 0;
         while(true) {
@@ -439,18 +497,32 @@ class Microsha {
 
             if(!running) break;
 
-            if(line.length() == 0) continue;
+            if(line.length() == 0) {
+                timer.time_start(); 
+                sh_time();
+                continue;
+            }
 
             list<vector<string>> conv;
             err = parseLine(line, conv);
             if(err < 0) return err;
-            if(err > 0) continue;
+            if(err > 0) {
+                timer.time_start(); 
+                sh_time();
+                continue;
+            }
             
             err = updateConv(conv);
             if(err < 0) return err;
             if(err > 0) continue;
 
+            timer.time_start();           
+
             err = runConv(conv);
+            if(err < 0) return err;
+            if(err > 0) continue;
+
+            err = sh_time();
             if(err < 0) return err;
             if(err > 0) continue;
         }
